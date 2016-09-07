@@ -19,6 +19,8 @@ static NSString *cellID = @"appCell";
 @property (nonatomic, strong) NSOperationQueue *queue;
 /** 存放操作队列 */
 @property (nonatomic, strong) NSMutableDictionary *operations;
+@property (nonatomic, strong) NSMutableDictionary *images;
+
 
 @end
 
@@ -32,6 +34,13 @@ static NSString *cellID = @"appCell";
     
     // Uncomment the following line to display an Edit button in the navigation bar for this view controller.
     // self.navigationItem.rightBarButtonItem = self.editButtonItem;
+}
+
+- (NSMutableDictionary *)images {
+    if (!_images) {
+        self.images = [NSMutableDictionary dictionary];
+    }
+    return _images;
 }
 
 - (NSOperationQueue *)queue {
@@ -65,6 +74,14 @@ static NSString *cellID = @"appCell";
 - (void)didReceiveMemoryWarning {
     [super didReceiveMemoryWarning];
     // Dispose of any resources that can be recreated.
+    
+    // 内存吃紧
+    // 移除操作
+    [self.queue cancelAllOperations];
+    [self.operations removeAllObjects];
+    
+    // 移除图片
+    [self.images removeAllObjects];
 }
 
 #pragma mark - Table view data source
@@ -83,28 +100,61 @@ static NSString *cellID = @"appCell";
     }
     // Configure the cell...
     AppModel *model = self.apps[indexPath.row];
-    
-    // operation 对象会不断的创建
-    // 解决重复下载图片的问题
-    NSBlockOperation *operation = self.operations[model.icon];
-    if (!operation) {
-        operation = [NSBlockOperation blockOperationWithBlock:^{
-            NSURL *url = [NSURL URLWithString:model.icon];
-            NSData *data = [NSData dataWithContentsOfURL:url];
-            UIImage *image = [UIImage imageWithData:data];
-            [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-                cell.imageView.image = image;
-                //[self.tableView reloadData];
-            }];
-        }];
-        [self.queue addOperation:operation];
-        self.operations[model.icon] = operation;
-//        [self.operations setObject:operation forKey:model.icon];
+    // 刚开始一进来，缓存中没有图片，进行可以看到的图片张数的下载，下载完成之后，会刷新表格，图片的设置其实是从缓存中取出来的刚才下载的图片
+    // 先从images缓存中取出图片URL对应的UIImage
+    UIImage *image = self.images[model.icon];
+    if (image) {
+        cell.imageView.image = image;
+    } else {
+        // 设置占位图片 placeholder
+        cell.imageView.image = [UIImage imageNamed:@"placeholder.jpg"];
+        
+        // download image
+        [self downloadImageWithUrl:model.icon IndexPath:indexPath];
     }
-    
     cell.textLabel.text = model.name;
     cell.detailTextLabel.text = model.download;
     return cell;
+}
+
+- (void)downloadImageWithUrl:(NSString *)imageUrl IndexPath:(NSIndexPath *)indexPath {
+    // operation 对象会不断的创建
+    // 解决重复下载图片的问题
+    
+    // 下载失败会重新下载
+    NSBlockOperation *operation = self.operations[imageUrl];
+    // 减少缩进的小技巧
+    if (operation) return;
+    operation = [NSBlockOperation blockOperationWithBlock:^{
+        // 模拟下载耗时
+        [NSThread sleepForTimeInterval:5];
+        NSURL *url = [NSURL URLWithString:imageUrl];
+        // 下载操作
+        NSData *data = [NSData dataWithContentsOfURL:url];
+        UIImage *image = [UIImage imageWithData:data];
+        [[NSOperationQueue mainQueue] addOperationWithBlock:^{
+            // 直接设置图片可能产生图片错乱
+            //cell.imageView.image = image;
+            // 添加图片到images
+            // 图片不能为空
+            if (image) {
+                [self.images setObject:image forKey:imageUrl];
+            }
+            // 移除operation（防止字典越来越大）
+            [self.operations removeObjectForKey:imageUrl];
+            // 刷新表格，但是不需要全部刷新，只需要刷新对应的那一行
+            // 当初的cell可能不是现在的cell，当初的行号还是现在的行号
+            //[self.tableView reloadData];
+            [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+        }];
+    }];
+    [self.queue addOperation:operation];
+    // 存放下载操作（解决重复下载的问题）
+    self.operations[imageUrl] = operation;
+    
+    
+    // [self.operations setObject:operation forKey:model.icon];
+
 }
 
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
@@ -154,5 +204,15 @@ static NSString *cellID = @"appCell";
     // Pass the selected object to the new view controller.
 }
 */
+
+// 开始拖拽时暂停下载
+- (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
+    self.queue.suspended = YES;
+}
+
+// 结束拖拽时开始下载
+- (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL)decelerate {
+    self.queue.suspended = NO;
+}
 
 @end
