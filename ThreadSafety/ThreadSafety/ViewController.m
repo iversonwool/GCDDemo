@@ -37,7 +37,6 @@
     [self.thread0 start];
     [self.thread1 start];
     [self.thread2 start];
-
 }
 
 - (void)sellTicket {
