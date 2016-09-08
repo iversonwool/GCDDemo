@@ -8,6 +8,7 @@
 
 #import "NetTableViewController.h"
 #import "AppModel.h"
+#define FileName(url) [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).lastObject stringByAppendingPathComponent:[url lastPathComponent]]
 
 static NSString *cellID = @"appCell";
 
@@ -106,11 +107,21 @@ static NSString *cellID = @"appCell";
     if (image) {
         cell.imageView.image = image;
     } else {
-        // 设置占位图片 placeholder
-        cell.imageView.image = [UIImage imageNamed:@"placeholder.jpg"];
         
-        // download image
-        [self downloadImageWithUrl:model.icon IndexPath:indexPath];
+        // 再从沙盒中去取
+        NSData *data = [NSData dataWithContentsOfFile:FileName(model.icon)];
+        
+        if (data) {
+            UIImage *image = [UIImage imageWithData:data];
+            cell.imageView.image = image;
+        } else {
+            // 设置占位图片 placeholder
+            cell.imageView.image = [UIImage imageNamed:@"placeholder.jpg"];
+            
+            // download image
+            [self downloadImageWithUrl:model.icon IndexPath:indexPath];
+        }
+       
     }
     cell.textLabel.text = model.name;
     cell.detailTextLabel.text = model.download;
@@ -138,6 +149,14 @@ static NSString *cellID = @"appCell";
             // 添加图片到images
             // 图片不能为空
             if (image) {
+                
+                // 由图片得到NSData
+                NSData *data = UIImagePNGRepresentation(image);
+                // 将图片存入沙盒
+                // 得到沙盒存放路径
+                
+                [data writeToFile:FileName(imageUrl) atomically:YES];
+                
                 [self.images setObject:image forKey:imageUrl];
             }
             // 移除operation（防止字典越来越大）
