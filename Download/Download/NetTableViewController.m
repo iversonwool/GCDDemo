@@ -8,11 +8,14 @@
 
 #import "NetTableViewController.h"
 #import "AppModel.h"
+#import "DownloadOperation.h"
+
 #define FileName(url) [NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES).lastObject stringByAppendingPathComponent:[url lastPathComponent]]
 
-static NSString *cellID = @"appCell";
+static NSString *const cellID = @"appCell";
 
-@interface NetTableViewController ()
+@interface NetTableViewController () <DownloadOperationDelegate>
+
 /** 存放应用*/
 @property (nonatomic, strong) NSMutableArray *apps;
 /** 存放所有下载操作的队列*/
@@ -21,7 +24,6 @@ static NSString *cellID = @"appCell";
 /** 存放操作队列 */
 @property (nonatomic, strong) NSMutableDictionary *operations;
 @property (nonatomic, strong) NSMutableDictionary *images;
-
 
 @end
 
@@ -37,6 +39,7 @@ static NSString *cellID = @"appCell";
     // self.navigationItem.rightBarButtonItem = self.editButtonItem;
 }
 
+#pragma mark - lazyload
 - (NSMutableDictionary *)images {
     if (!_images) {
         self.images = [NSMutableDictionary dictionary];
@@ -77,8 +80,11 @@ static NSString *cellID = @"appCell";
     // Dispose of any resources that can be recreated.
     
     // 内存吃紧
-    // 移除操作
+    
+    // 取消操作（只能取消还未开始的操作）
     [self.queue cancelAllOperations];
+    // 移除操作
+
     [self.operations removeAllObjects];
     
     // 移除图片
@@ -86,9 +92,6 @@ static NSString *cellID = @"appCell";
 }
 
 #pragma mark - Table view data source
-
-
-
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     return self.apps.count;
 }
@@ -107,21 +110,17 @@ static NSString *cellID = @"appCell";
     if (image) {
         cell.imageView.image = image;
     } else {
-        
         // 再从沙盒中去取
         NSData *data = [NSData dataWithContentsOfFile:FileName(model.icon)];
-        
         if (data) {
             UIImage *image = [UIImage imageWithData:data];
             cell.imageView.image = image;
         } else {
             // 设置占位图片 placeholder
             cell.imageView.image = [UIImage imageNamed:@"placeholder.jpg"];
-            
             // download image
             [self downloadImageWithUrl:model.icon IndexPath:indexPath];
         }
-       
     }
     cell.textLabel.text = model.name;
     cell.detailTextLabel.text = model.download;
@@ -131,51 +130,22 @@ static NSString *cellID = @"appCell";
 - (void)downloadImageWithUrl:(NSString *)imageUrl IndexPath:(NSIndexPath *)indexPath {
     // operation 对象会不断的创建
     // 解决重复下载图片的问题
-    
     // 下载失败会重新下载
-    NSBlockOperation *operation = self.operations[imageUrl];
+    DownloadOperation *operation = self.operations[imageUrl];
     // 减少缩进的小技巧
     if (operation) return;
-    operation = [NSBlockOperation blockOperationWithBlock:^{
-        // 模拟下载耗时
-        [NSThread sleepForTimeInterval:5];
-        NSURL *url = [NSURL URLWithString:imageUrl];
-        // 下载操作
-        NSData *data = [NSData dataWithContentsOfURL:url];
-        UIImage *image = [UIImage imageWithData:data];
-        [[NSOperationQueue mainQueue] addOperationWithBlock:^{
-            // 直接设置图片可能产生图片错乱
-            //cell.imageView.image = image;
-            // 添加图片到images
-            // 图片不能为空
-            if (image) {
-                
-                // 由图片得到NSData
-                NSData *data = UIImagePNGRepresentation(image);
-                // 将图片存入沙盒
-                // 得到沙盒存放路径
-                
-                [data writeToFile:FileName(imageUrl) atomically:YES];
-                
-                [self.images setObject:image forKey:imageUrl];
-            }
-            // 移除operation（防止字典越来越大）
-            [self.operations removeObjectForKey:imageUrl];
-            // 刷新表格，但是不需要全部刷新，只需要刷新对应的那一行
-            // 当初的cell可能不是现在的cell，当初的行号还是现在的行号
-            //[self.tableView reloadData];
-            [self.tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
-        }];
-    }];
+    // 自定义Operation 让下载操作不暴露在外（封装下载操作）
+    operation = [[DownloadOperation alloc] init];
+    operation.imageURL = imageUrl;
+    operation.delegate = self;
+    operation.indexPath = indexPath;
+    // 添加操作到队列
     [self.queue addOperation:operation];
     // 存放下载操作（解决重复下载的问题）
     self.operations[imageUrl] = operation;
-    
-    
-    // [self.operations setObject:operation forKey:model.icon];
-
 }
 
+#pragma mark - UITableViewDelegate
 - (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
     return 60.;
 }
@@ -224,6 +194,30 @@ static NSString *cellID = @"appCell";
 }
 */
 
+#pragma mark - DownloadOperationDelegate
+- (void)downloadOperation:(DownloadOperation *)operation didFinishDownloadFile:(UIImage *)image {
+
+    // 直接设置图片可能产生图片错乱
+    //cell.imageView.image = image;
+    // 添加图片到images
+    // 图片不能为空，图片为空添加到字典会崩溃
+    if (image) {
+        // 由图片得到NSData
+        NSData *data = UIImagePNGRepresentation(image);
+        // 将图片存入沙盒
+        // 得到沙盒存放路径
+        [data writeToFile:FileName(operation.imageURL) atomically:YES];
+        [self.images setObject:image forKey:operation.imageURL];
+    }
+    // 移除operation（防止字典越来越大）
+    [self.operations removeObjectForKey:operation.imageURL];
+    // 刷新表格，但是不需要全部刷新，只需要刷新对应的那一行
+    // 当初的cell可能不是现在的cell，当初的行号还是现在的行号
+    //[self.tableView reloadData];
+    [self.tableView reloadRowsAtIndexPaths:@[operation.indexPath] withRowAnimation:UITableViewRowAnimationNone];
+}
+
+#pragma mark - UIScrollViewDelegate
 // 开始拖拽时暂停下载
 - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView {
     self.queue.suspended = YES;
